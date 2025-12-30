@@ -85,7 +85,7 @@ def get_leader_points():
     c = db_connection.cursor()
     c.execute("SELECT MAX(points) FROM users WHERE banned = 0")
     result = c.fetchone()
-    return max(result[0] or 1, 1)  # تجنب القسمة على صفر
+    return max(result[0] or 1, 1)
 
 def add_new_user(uid, un, fn, ref=None):
     c = db_connection.cursor()
@@ -229,6 +229,23 @@ async def broadcast(ctx, msg, btn_txt=None, btn_data=None):
 def get_ref_link(uid):
     return f"https://t.me/{BOT_USERNAME}?start={uid}"
 
+# === تذكيرات المسابقة ===
+async def send_contest_reminder(context: ContextTypes.DEFAULT_TYPE):
+    job_data = context.job.data
+    contest_id = job_data['contest_id']
+    reminder_type = job_data['type']
+
+    contest = get_contest_by_id(contest_id)
+    if not contest or contest[4] != 'active':
+        return
+
+    if reminder_type == '1h':
+        msg = "⏳ تبقى ساعة على انتهاء المسابقة! أكمل إحالاتك الآن!"
+    else:  # '10m'
+        msg = "🚨 تبقى 10 دقائق فقط! هل أنت في الصدارة؟ 🏆"
+
+    await broadcast(context, msg)
+
 # === معالجات رئيسية ===
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -371,7 +388,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.effective_message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb))
 
-# === 🌟 تعديل رئيسي: ملفي يعرض نسبة مئوية مقارنة بالمتصدر ===
+# === 🌟 ملفي: يعرض نسبة مقارنة بالمتصدر ===
 async def view_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -388,7 +405,6 @@ async def view_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filled = int((percentage / 100) * bar_length)
     bar = "█" * filled + "░" * (bar_length - filled)
 
-    # أقرب منافس (كما كان)
     c = db_connection.cursor()
     c.execute("""
         SELECT username, full_name, points 
@@ -539,7 +555,7 @@ async def view_cancelled_contests(update: Update, context: ContextTypes.DEFAULT_
     contests = c.fetchall()
     if not contests:
         await q.edit_message_text(
-            "📭 لا توجد مسابقات ملغاة.",
+            "<tool_call> لا توجد مسابقات ملغاة.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="manage_contests")]])
         )
         return
@@ -615,12 +631,31 @@ async def handle_winner_count_input(update: Update, context: ContextTypes.DEFAUL
         
         await broadcast(context, "🧹 تم تصفير النقاط بسبب بدء مسابقة جديدة.")
         await broadcast(context, "🎉 تم بدء مسابقة جديدة!", "عرض التفاصيل", f"view_contest_{contest_id}")
+
+        # === جدولة التذكيرات ===
+        end_time = datetime.strptime(end, "%Y-%m-%d %H:%M")
+        now_dt = datetime.now()
+        job_queue = context.application.bot_data['job_queue']
+
+        if (end_time - now_dt).total_seconds() > 3600:
+            job_queue.run_once(
+                send_contest_reminder,
+                when=end_time - timedelta(hours=1),
+                data={'contest_id': contest_id, 'type': '1h'}
+            )
+        if (end_time - now_dt).total_seconds() > 600:
+            job_queue.run_once(
+                send_contest_reminder,
+                when=end_time - timedelta(minutes=10),
+                data={'contest_id': contest_id, 'type': '10m'}
+            )
         
         await update.message.reply_text(
             f"✅ تم نشر المسابقة!\nعدد الفائزين: {winner_count}",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع للوحة التحكم", callback_data="back_admin")]])
         )
-    except:
+    except Exception as e:
+        logging.error(f"Error in winner count input: {e}")
         await update.message.reply_text("❌ أدخل رقمًا صحيحًا (أي رقم موجب).")
     finally:
         context.user_data.clear()
@@ -1152,9 +1187,19 @@ async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     logging.basicConfig(level=logging.WARNING)
     app = Application.builder().token(BOT_TOKEN).build()
+
+    # معالج أخطاء
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        logging.error("Exception while handling an update:", exc_info=context.error)
+    app.add_error_handler(error_handler)
+
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=list(ADMIN_IDS)), handle_admin_text))
     app.add_handler(CallbackQueryHandler(button_router))
+
+    # تفعيل JobQueue
+    app.bot_data['job_queue'] = app.job_queue
+
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
