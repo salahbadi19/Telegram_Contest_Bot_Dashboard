@@ -1186,21 +1186,26 @@ async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === التشغيل ===
 def main():
     logging.basicConfig(level=logging.WARNING)
+
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # معالج أخطاء
-    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-        logging.error("Exception while handling an update:", exc_info=context.error)
-    app.add_error_handler(error_handler)
+    # تفعيل JobQueue
+    app.bot_data["job_queue"] = app.job_queue
 
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        logging.error(
+            "Exception while handling an update:",
+            exc_info=context.error
+        )
+
+    app.add_error_handler(error_handler)
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=list(ADMIN_IDS)), handle_admin_text))
     app.add_handler(CallbackQueryHandler(button_router))
 
-    # تفعيل JobQueue
-    app.bot_data['job_queue'] = app.job_queue
-
     app.run_polling(drop_pending_updates=True)
 
+
+# 🔴 هذا السطر ضروري لتشغيل main()
 if __name__ == "__main__":
     main()
