@@ -4,13 +4,11 @@ import importlib.util
 import sys
 import os
 import telegram
+import config  # استيراد ملف الإعدادات
 
 # ------------------------
-# استيراد الإعدادات من ملف config.py
-# يجب أن يحتوي config.py على: TOKEN = "xxx", CHANNEL_ID = "xxx", وغيرها
-import config
-
-TOKEN = config.TOKEN
+# استخدام التوكن من config.py
+TOKEN = config.BOT_TOKEN
 WEBHOOK_PATH = f"/{TOKEN}"
 bot = telegram.Bot(token=TOKEN)
 
@@ -28,7 +26,7 @@ def run_bot(update):
     if hasattr(bot_module, "main"):
         bot_module.main(update)
     else:
-        # إذا bot.py يعمل مباشرة مع التحديثات، يمكن تجاهل هذا الجزء
+        # إذا bot.py يعمل مباشرة مع التحديثات، يمكن تركه كما هو
         pass
 
 # ------------------------
